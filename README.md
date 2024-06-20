@@ -9,8 +9,8 @@ This repo presents some example codes to reproduce some results in
 
 - Download the source code by
   ```shell
-  git clone https://github.com/microsoft/GenerativeImage2Text.git
-  cd GenerativeImage2Text
+  git clone https://github.com/Paulineeeeeeee/GIT.git
+  cd GIT
   ```
 
 - Install the package
