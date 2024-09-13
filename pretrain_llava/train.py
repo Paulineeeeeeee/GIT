@@ -40,7 +40,7 @@ from .model import get_git_model
 from transformers import get_cosine_schedule_with_warmup
 import jsonlines
 from torch.utils.data import Dataset,DataLoader
-from .util import AITW_Dataset,AITW_Dataset_V2 ,trsfm, write_log,LlamaTouch
+from .util import AITW_Dataset,AITW_Dataset_V2 ,trsfm, write_log
 from .scorer import Scorers
 def get_data(image_file, prefix, target, tokenizer, image_transform):
     max_text_len = 40
@@ -344,10 +344,9 @@ def mytrain(param,args):
     'exp_name'
     '''
     args['lr'] = float(args['lr'])
-    annotations_file = '/local/pauline/GIT/preprocessing/no_miss_google_apps_train.jsonl'
-    data_path = '/home/pauline/no-miss-AITW/google_apps/'
-    data_path_V2 = '/home/pauline/no-miss-AITW/'
-    logfile = f"./log/{args['exp_name']}_lr{args['lr']}_wd{args['wd']}_im{param.get('num_image_with_embedding')}_log.txt"
+    annotations_file = '/local/pauline/GIT/llava_detail/detail.jsonl'
+    data_path = '/local/pauline/GIT/llava_detail/train2017'
+    logfile = f"/local/pauline/GIT/llava_detail/log/{args['exp_name']}_lr{args['lr']}_wd{args['wd']}_im{param.get('num_image_with_embedding')}_log.txt"
     # 確認目錄是否存在，如果不存在則創建
     os.makedirs(os.path.dirname(logfile), exist_ok=True)
 
@@ -357,37 +356,24 @@ def mytrain(param,args):
             f.write('')  # 創建文件並寫入空內容
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
     image_size = ((288,160) if args['Pix2Struct'] else (224,224))
-
+    TrainDataset = AITW_Dataset(annotations_file,data_path,'TRAIN',tokenizer,transform = trsfm(image_size=image_size,split='TRAIN')
+        ,num_images=param['num_image_with_embedding'])
+    # TrainDataset = AITW_Dataset_V2(data_path_V2,'TRAIN',tokenizer,transform = trsfm(image_size=image_size,split='TRAIN')
+    #     ,num_images=param['num_image_with_embedding'])
+    TrainLoader = DataLoader(TrainDataset, batch_size=int(args['bs']/args['acc_step']), num_workers=args['num_workers'], \
+        shuffle=True, collate_fn = TrainDataset.collate_fn)
+    ValidDataset = AITW_Dataset(annotations_file,data_path,'VALID',tokenizer,transform = trsfm(image_size=image_size,split='VALID')
+        ,num_images=param['num_image_with_embedding'])
+    # ValidDataset = AITW_Dataset_V2(data_path_V2,'VALID',tokenizer,transform = trsfm(image_size=image_size,split='VALID')
+    #     ,num_images=param['num_image_with_embedding'])
+    ValidLoader = DataLoader(ValidDataset, batch_size=int(args['bs']/args['acc_step']), num_workers=args['num_workers'], \
+        shuffle=False, collate_fn = ValidDataset.collate_fn)
     # param = {'num_image_with_embedding':6}
     device = torch.device(args.get('cuda','cuda') if torch.cuda.is_available() else "cpu")
     model = get_git_model(tokenizer, param)   
     model.to(device)
-    
-    if args['exp_name'] == 'LLAMATOUCH':
-        TrainDataset = LlamaTouch(data_path_V2,'TRAIN',tokenizer,transform = trsfm(image_size=image_size,split='TRAIN')
-                                ,num_images=param['num_image_with_embedding'])
-        TrainLoader = DataLoader(TrainDataset, batch_size=int(args['bs']/args['acc_step']), num_workers=args['num_workers'],shuffle=True, collate_fn = TrainDataset.collate_fn)    
-        
-        ValidDataset = LlamaTouch(data_path_V2,'VALID',tokenizer,transform = trsfm(image_size=image_size,split='VALID')
-                                ,num_images=param['num_image_with_embedding'])
-        ValidLoader = DataLoader(ValidDataset, batch_size=int(args['bs']/args['acc_step']), num_workers=args['num_workers'],shuffle=False, collate_fn = ValidDataset.collate_fn)
-
-    elif args['exp_name'] == 'AITW':
-        # TrainDataset = AITW_Dataset(annotations_file,data_path,'TRAIN',tokenizer,transform = trsfm(image_size=image_size,split='TRAIN')
-        #     ,num_images=param['num_image_with_embedding'])
-        TrainDataset = AITW_Dataset_V2(data_path_V2,'TRAIN',tokenizer,transform = trsfm(image_size=image_size,split='TRAIN')
-            ,num_images=param['num_image_with_embedding'])
-        TrainLoader = DataLoader(TrainDataset, batch_size=int(args['bs']/args['acc_step']), num_workers=args['num_workers'],shuffle=True, collate_fn = TrainDataset.collate_fn)
-
-        # ValidDataset = AITW_Dataset(annotations_file,data_path,'VALID',tokenizer,transform = trsfm(image_size=image_size,split='VALID')
-        #     ,num_images=param['num_image_with_embedding'])
-        ValidDataset = AITW_Dataset_V2(data_path_V2,'VALID',tokenizer,transform = trsfm(image_size=image_size,split='VALID')
-            ,num_images=param['num_image_with_embedding'])
-        ValidLoader = DataLoader(ValidDataset, batch_size=int(args['bs']/args['acc_step']), num_workers=args['num_workers'],shuffle=False, collate_fn = ValidDataset.collate_fn)
-    
     num_training_steps = len(TrainLoader) / args['acc_step'] * args['epoch'] 
     num_warmup_steps = int(0.1 * num_training_steps)
-
     if args['use_dif_lr']:
         optimizer_img = torch.optim.AdamW(params=model.image_encoder.parameters(), lr=args['lr'], weight_decay=args['wd'])
         optimizer_tex = torch.optim.AdamW(params=model.textual.parameters(), lr=args['lr']*5, weight_decay=args['wd'])
@@ -466,7 +452,7 @@ def mytrain(param,args):
         # f"{des}{args['exp_name']}_bs{args['bs']}_lr{args['lr']}_im{param.get('num_image_with_embedding')}_e{epoch}.ckpt")
         total_loss = sum(train_loss) / len(train_loss)
         with open(logfile,"a") as f:
-            f.write(f"[ Train | {epoch + 1:03d}/{args['epoch']:03d} ] loss = {total_loss:.5f}\n")
+            f.write(f"[ Train | {epoch + 1:03d}/{args['epoch']:03d} ] loss = {total_loss:.5f}  ")
         print(f"[ Train | {epoch + 1:03d}/{args['epoch']:03d} ] loss = {total_loss:.5f}")
         
         if args['use_dif_lr']:
